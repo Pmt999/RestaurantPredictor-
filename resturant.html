@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Restaurant Predictor - AI-powered planning with map-based location and crowd prediction to optimize resources." />
+    <meta name="keywords" content="restaurant, predictor, AI, map, location, crowd, planning, waste reduction" />
+    <meta name="author" content="UCA Students" />
+    <title>🍽 Restaurant Predictor</title>
+
+    <link rel="stylesheet" href="style.css" />
+    <link rel="icon" type="image/png" href="https://cdn-icons-png.flaticon.com/512/3075/3075977.png" />
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet" />
+
+    <!-- Leaflet -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+
+    <!-- TensorFlow.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.18.0/dist/tf.min.js"></script>
+    <script src="https://kit.fontawesome.com/a076d05399.js" crossorigin="anonymous"></script>
+</head>
+<body>
+    <div class="particle-background" aria-hidden="true"></div>
+    <div class="notification-container" id="notificationContainer" role="alert" aria-live="polite"></div>
+
+    <div class="main-container">
+        <header class="header animate-header" role="banner">
+            <div class="hero">
+                <h1><i class="fas fa-utensils" aria-hidden="true"></i> Restaurant Predictor</h1>
+                <p>Map-based AI planning with crowd prediction to reduce waste.</p>
+            </div>
+        </header>
+
+        <main>
+            <section class="card animate-card" aria-labelledby="form-heading">
+                <h2 id="form-heading" class="sr-only">Prediction Form</h2>
+                <form id="predictionForm" aria-describedby="form-description">
+                    <p id="form-description" class="sr-only">Select a location on the map, date, and seats for AI-powered restaurant resource predictions.</p>
+
+                    <div class="form-group">
+                        <label for="locationSearch"><i class="fas fa-map-marker-alt" aria-hidden="true"></i> Search Location (UK)</label>
+                        <input type="text" id="locationSearch" placeholder="e.g., London, UK" value="Lat: 51.2799, Lon: -0.7403" aria-describedby="locationError">
+                        <div id="map" style="height: 200px; border-radius: 12px; margin-top: 10px;"></div>
+                        <input type="hidden" id="latitude" value="51.2799" required>
+                        <input type="hidden" id="longitude" value="-0.7403" required>
+                        <span class="error-message" id="locationError" role="alert"></span>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="date"><i class="fas fa-calendar-alt" aria-hidden="true"></i> Select Date</label>
+                        <!-- value will be set to TODAY by script.js -->
+                        <input type="date" id="date" required aria-describedby="dateError">
+                        <span class="error-message" id="dateError" role="alert"></span>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="seats"><i class="fas fa-chair" aria-hidden="true"></i> Number of Seats</label>
+                        <input type="number" id="seats" value="20" min="0" max="500" required aria-describedby="seatsError">
+                        <span class="error-message" id="seatsError" role="alert"></span>
+                    </div>
+
+                    <div class="form-group custom-resources">
+                        <label><i class="fas fa-plus-circle" aria-hidden="true"></i> Custom Resources</label>
+                        <div id="customResources" role="list"></div>
+                        <button type="button" class="btn btn-add-resource" id="addResourceBtn">
+                            <i class="fas fa-plus" aria-hidden="true"></i> Add Resource
+                        </button>
+                    </div>
+
+                    <div class="button-group">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-magic" aria-hidden="true"></i> Predict
+                        </button>
+                        <button type="button" class="btn btn-secondary" id="resetBtn">
+                            <i class="fas fa-undo" aria-hidden="true"></i> Reset
+                        </button>
+                    </div>
+                </form>
+            </section>
+
+            <section class="card result animate-card" id="resultSection" style="display:none;" aria-labelledby="result-heading">
+                <h2 id="result-heading"><i class="fas fa-star" aria-hidden="true"></i> AI Prediction Result</h2>
+
+                <div class="tabs">
+                    <button class="tab-btn active" data-tab="prediction">Prediction</button>
+                    <button class="tab-btn" data-tab="waste" id="wasteTab" style="display:none;">Contact Waste Department</button>
+                    <button class="tab-btn" data-tab="compost" id="compostTab" style="display:none;">Sell to Compost Department</button>
+                    <button class="tab-btn" data-tab="donation" id="donationTab" style="display:none;">Post Food for Donation</button>
+                </div>
+
+                <div class="loader" id="loader" aria-hidden="true"></div>
+
+                <div id="predictionTab" class="tab-content active" role="region" aria-live="polite">
+                    <div id="predictionOutput"></div>
+
+                    <!-- === Learning panel (active learning) === -->
+                    <div id="learningPanel" style="margin-top:16px; padding-top:12px; border-top:1px solid #e2e8f0; display:none;">
+                        <h3 style="margin:0 0 10px 0;">📘 Learn from the real day</h3>
+                        <p style="margin:0 0 8px 0;">After that day, tell me the <strong>actual guests served</strong> so I can learn and improve future predictions.</p>
+
+                        <div class="form-group" style="margin:10px 0;">
+                            <label for="actualGuests">Actual Guests Served</label>
+                            <input type="number" id="actualGuests" min="0" placeholder="e.g., 42">
+                            <span class="error-message" id="actualGuestsError" role="alert"></span>
+                            <small class="muted" style="display:block;margin-top:.25rem;">Any non-negative number is allowed. If it’s higher than seats, I’ll scale it appropriately for learning.</small>
+                        </div>
+
+                        <details style="margin-bottom:10px;">
+                            <summary>Adjust conditions (optional)</summary>
+                            <div class="form-group">
+                                <label for="learnWeather">Weather</label>
+                                <select id="learnWeather">
+                                    <option>Clear</option><option>Mainly Clear</option>
+                                    <option>Partly Cloudy</option><option>Cloudy</option>
+                                    <option>Fog</option><option>Foggy</option>
+                                    <option>Light Drizzle</option><option>Moderate Drizzle</option><option>Dense Drizzle</option>
+                                    <option>Light Rain</option><option>Moderate Rain</option><option>Heavy Rain</option>
+                                    <option>Light Snow</option><option>Moderate Snow</option><option>Heavy Snow</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="display:flex;align-items:center;gap:8px;">
+                                <input type="checkbox" id="learnHoliday" />
+                                <label for="learnHoliday" style="margin:0;">It was a holiday</label>
+                            </div>
+                        </details>
+
+                        <button class="btn btn-primary" id="saveActualsBtn">
+                            <i class="fas fa-brain" aria-hidden="true"></i> Save Actuals & Improve
+                        </button>
+                        <small class="muted" style="display:block;margin-top:.4rem;">
+                            Your corrections are stored only in this browser (localStorage) and used to retrain the on-device model.
+                        </small>
+                    </div>
+                </div>
+
+                <div id="wasteTabContent" class="tab-content" style="display:none;">
+                    <form id="wasteForm" aria-describedby="waste-form-description">
+                        <p id="waste-form-description" class="sr-only">Contact the waste department to report surplus food materials.</p>
+                        <div class="form-group">
+                            <label for="restaurantName">Restaurant Name</label>
+                            <input type="text" id="restaurantName" required aria-describedby="restaurantNameError">
+                            <span class="error-message" id="restaurantNameError" role="alert"></span>
+                        </div>
+                        <div class="form-group">
+                            <label for="email">Email</label>
+                            <input type="email" id="email" required aria-describedby="emailError">
+                            <span class="error-message" id="emailError" role="alert"></span>
+                        </div>
+                        <div class="form-group">
+                            <label for="wasteMessage">Message</label>
+                            <textarea id="wasteMessage" rows="5" required aria-describedby="wasteMessageError"></textarea>
+                            <span class="error-message" id="wasteMessageError" role="alert"></span>
+                        </div>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-paper-plane" aria-hidden="true"></i> Send
+                        </button>
+                    </form>
+                </div>
+
+                <div id="compostTabContent" class="tab-content" style="display:none;">
+                    <form id="compostForm" aria-describedby="compost-form-description">
+                        <p id="compost-form-description" class="sr-only">Contact Olleco to sell surplus food waste for anaerobic digestion.</p>
+                        <div class="form-group">
+                            <label for="compostRestaurantName">Restaurant Name</label>
+                            <input type="text" id="compostRestaurantName" required aria-describedby="compostRestaurantNameError">
+                            <span class="error-message" id="compostRestaurantNameError" role="alert"></span>
+                        </div>
+                        <div class="form-group">
+                            <label for="compostEmail">Email</label>
+                            <input type="email" id="compostEmail" required aria-describedby="compostEmailError">
+                            <span class="error-message" id="compostEmailError" role="alert"></span>
+                        </div>
+                        <div class="form-group">
+                            <label for="compostMessage">Message</label>
+                            <textarea id="compostMessage" rows="5" required aria-describedby="compostMessageError"></textarea>
+                            <span class="error-message" id="compostMessageError" role="alert"></span>
+                        </div>
+                        <p><a href="https://www.olleco.co.uk/food-waste-collections" target="_blank" rel="noopener">Learn more about Olleco’s food waste collection services</a></p>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-paper-plane" aria-hidden="true"></i> Send
+                        </button>
+                    </form>
+                </div>
+
+                <div id="donationTabContent" class="tab-content" style="display:none;">
+                    <form id="donationForm" aria-describedby="donation-form-description">
+                        <p id="donation-form-description" class="sr-only">Post custom food items for donation on the map.</p>
+
+                        <div class="form-group">
+                            <label>Donation Items</label>
+                            <div id="donationItems" role="list"></div>
+                            <button type="button" class="btn btn-add-resource" id="addDonationItemBtn">
+                                <i class="fas fa-plus" aria-hidden="true"></i> Add Item
+                            </button>
+                            <span class="error-message" id="donationItemsError" role="alert"></span>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="donationRestaurantName">Restaurant Name</label>
+                            <input type="text" id="donationRestaurantName" required aria-describedby="donationRestaurantNameError">
+                            <span class="error-message" id="donationRestaurantNameError" role="alert"></span>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="donationEmail">Email</label>
+                            <input type="email" id="donationEmail" required aria-describedby="donationEmailError">
+                            <span class="error-message" id="donationEmailError" role="alert"></span>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="donationMessage">Message</label>
+                            <textarea id="donationMessage" rows="5" required aria-describedby="donationMessageError"></textarea>
+                            <span class="error-message" id="donationMessageError" role="alert"></span>
+                        </div>
+
+                        <p>Note: These items will be posted on the map at your restaurant's location.</p>
+
+                        <div class="button-group">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-paper-plane" aria-hidden="true"></i> Post Donation (Preview Here)
+                            </button>
+                            <button type="button" class="btn btn-donate" id="donateNowBtn" title="Post to Resource Map and open it">
+                                <i class="fas fa-hand-holding-heart" aria-hidden="true"></i> Donate Now on Resource Map
+                            </button>
+                        </div>
+                        <small class="muted" style="display:block;margin-top:.4rem;">
+                            This posts to your Resource Map and opens it in a new tab.
+                        </small>
+                    </form>
+                </div>
+            </section>
+
+            <section class="card history animate-card" id="historySection" style="display:none;" aria-labelledby="history-heading">
+                <h2 id="history-heading"><i class="fas fa-history" aria-hidden="true"></i> Recent Predictions</h2>
+                <ul id="predictionHistory" role="list"></ul>
+            </section>
+        </main>
+
+        <footer class="footer" role="contentinfo">
+            <p>© 2025 Restaurant Predictor • Built with ❤️ by UCA Students</p>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+
+    <!-- Simple particles (unchanged) -->
+    <script>
+        function createParticle() {
+            const particle = document.createElement('div');
+            particle.classList.add('particle');
+            document.querySelector('.particle-background').appendChild(particle);
+            const size = Math.random() * 3 + 1;
+            particle.style.width = `${size}px`;
+            particle.style.height = `${size}px`;
+            particle.style.left = `${Math.random() * 100}vw`;
+            particle.style.animationDuration = `${Math.random() * 3 + 2}s`;
+            setTimeout(() => particle.remove(), 5000);
+        }
+        setInterval(createParticle, 300);
+    </script>
+</body>
+</html>
